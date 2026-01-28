@@ -72,19 +72,19 @@
       cursor: not-allowed;
     }
 
-    #editCount {
-      margin-top: 10px;
-      font-size: 14px;
-      color: #9ca3af;
-      text-align: center;
-    }
-
     #status {
       margin-top: 6px;
       font-size: 12px;
       color: #7c7cff;
       text-align: center;
       min-height: 16px;
+    }
+
+    #editCount, #onlineCount {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #9ca3af;
+      text-align: center;
     }
 
     #disclaimer {
@@ -123,6 +123,7 @@
 
   <button id="saveBtn" disabled>Apply Changes</button>
   <p id="status"></p>
+  <p id="onlineCount">Users online: 0</p>
   <p id="editCount">Edited 0 times</p>
   <p id="disclaimer">Not affiliated with PolyBuzz or CLOUD WHALE.</p>
 </div>
@@ -135,7 +136,8 @@
     setDoc,
     updateDoc,
     increment,
-    onSnapshot
+    onSnapshot,
+    collection
   } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -162,6 +164,7 @@
 
   const saveBtn = document.getElementById("saveBtn");
   const editCount = document.getElementById("editCount");
+  const onlineCount = document.getElementById("onlineCount");
   const status = document.getElementById("status");
 
   let lastSaved = {};
@@ -182,7 +185,8 @@
       saveBtn.disabled = true;
       status.textContent = `Please wait ${remaining}s before saving again`;
     } else {
-      status.textContent = "";
+      status.textContent = isEditing ? "Editing…" : "";
+      saveBtn.disabled = totalChanges() < 3;
     }
   }
 
@@ -215,10 +219,9 @@
     isEditing = false;
     saveBtn.disabled = true;
     status.textContent = "Saved";
-
-    setInterval(updateCooldownUI, 1000);
   });
 
+  // 🔴 Live collaboration: listen to document
   onSnapshot(docRef, snap => {
     if (!snap.exists()) return;
     const data = snap.data();
@@ -240,7 +243,30 @@
     };
 
     status.textContent = "Up to date";
+    updateCooldownUI();
   });
+
+  // 🔴 Online users tracking
+  import { setDoc, doc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+  const userId = Math.random().toString(36).substring(2,10);
+  const presenceRef = doc(db, "presence", userId);
+
+  async function updatePresence() {
+    await setDoc(presenceRef, { lastSeen: Date.now() }, { merge: true });
+  }
+
+  updatePresence();
+  setInterval(updatePresence, 5000);
+
+  onSnapshot(collection(db, "presence"), snap => {
+    const now = Date.now();
+    const onlineUsers = snap.docs.filter(doc => now - doc.data().lastSeen < 15000).length;
+    onlineCount.textContent = `Users online: ${onlineUsers}`;
+  });
+
+  // 🔴 Update cooldown every second
+  setInterval(updateCooldownUI, 1000);
 </script>
 
 </body>
