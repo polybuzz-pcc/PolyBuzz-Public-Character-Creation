@@ -36,11 +36,6 @@
       margin-bottom: 8px;
     }
 
-    label span {
-      color: #ff4d4d;
-      margin-left: 4px;
-    }
-
     input,
     textarea {
       width: 100%;
@@ -54,21 +49,9 @@
       resize: vertical;
     }
 
-    input::placeholder,
-    textarea::placeholder {
-      color: #9ca3af;
-    }
-
     input:focus,
     textarea:focus {
       outline: 2px solid #7c7cff;
-    }
-
-    .counter {
-      font-size: 12px;
-      color: #9ca3af;
-      text-align: right;
-      margin-top: 6px;
     }
 
     button {
@@ -84,8 +67,9 @@
       cursor: pointer;
     }
 
-    button:hover {
-      background: #6b6bf0;
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
     }
 
     #editCount {
@@ -93,6 +77,14 @@
       font-size: 14px;
       color: #9ca3af;
       text-align: center;
+    }
+
+    #status {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #7c7cff;
+      text-align: center;
+      min-height: 16px;
     }
 
     #disclaimer {
@@ -110,38 +102,41 @@
   <h1>Shared Character Editor</h1>
 
   <div class="field">
-    <label>Name <span>*</span></label>
-    <input id="name" type="text" minlength="3" maxlength="36" placeholder="Name your character">
-    <div class="counter">3–36 characters</div>
+    <label>Name</label>
+    <input id="name" maxlength="36">
   </div>
 
   <div class="field">
-    <label>Intro <span>*</span></label>
-    <textarea id="intro" maxlength="400" rows="4" placeholder="Short intro for your character"></textarea>
-    <div class="counter">Max 400 characters</div>
+    <label>Intro</label>
+    <textarea id="intro" maxlength="400" rows="4"></textarea>
   </div>
 
   <div class="field">
-    <label>Greeting <span>*</span></label>
-    <textarea id="greeting" maxlength="1000" rows="6" placeholder="Character greeting message"></textarea>
-    <div class="counter">Max 1000 characters</div>
+    <label>Greeting</label>
+    <textarea id="greeting" maxlength="1000" rows="6"></textarea>
   </div>
 
   <div class="field">
     <label>Background</label>
-    <textarea id="background" maxlength="10000" rows="10" placeholder="Detailed backstory / background info"></textarea>
-    <div class="counter">Max 10,000 characters</div>
+    <textarea id="background" maxlength="10000" rows="10"></textarea>
   </div>
 
-  <button id="saveBtn">Apply Changes</button>
+  <button id="saveBtn" disabled>Apply Changes</button>
+  <p id="status"></p>
   <p id="editCount">Edited 0 times</p>
-  <p id="disclaimer">Not affiliated with PolyBuzz. This is a fan-made shared character editor.</p>
+  <p id="disclaimer">Not affiliated with PolyBuzz. Fan-made shared editor.</p>
 </div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc, updateDoc, increment }
-    from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+  import {
+    getFirestore,
+    doc,
+    setDoc,
+    updateDoc,
+    increment,
+    onSnapshot
+  } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDu5leEioE0u_G2o7YNBHIiYZSTjoLyZko",
@@ -152,79 +147,100 @@
     appId: "1:403784337302:web:2f1bbcec98aa04ede2ffb7"
   };
 
+  const SAVE_COOLDOWN = 10; // seconds
+
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const docRef = doc(db, "character", "shared");
 
-  const name = document.getElementById("name");
-  const intro = document.getElementById("intro");
-  const greeting = document.getElementById("greeting");
-  const background = document.getElementById("background");
-  const saveBtn = document.getElementById("saveBtn");
-  const editCount = document.getElementById("editCount");
-
-  let lastSaved = {
-    name: "",
-    intro: "",
-    greeting: "",
-    background: ""
+  const fields = {
+    name: document.getElementById("name"),
+    intro: document.getElementById("intro"),
+    greeting: document.getElementById("greeting"),
+    background: document.getElementById("background")
   };
 
-  async function loadCharacter() {
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data();
+  const saveBtn = document.getElementById("saveBtn");
+  const editCount = document.getElementById("editCount");
+  const status = document.getElementById("status");
 
-      name.value = data.name || "";
-      intro.value = data.intro || "";
-      greeting.value = data.greeting || "";
-      background.value = data.background || "";
+  let lastSaved = {};
+  let isEditing = false;
+  let lastSaveTime = 0;
 
-      editCount.textContent = `Edited ${data.edits || 0} times`;
+  function totalChanges() {
+    return Object.keys(fields).reduce((sum, key) => {
+      return sum + Math.abs(fields[key].value.length - (lastSaved[key]?.length || 0));
+    }, 0);
+  }
 
-      lastSaved = {
-        name: name.value,
-        intro: intro.value,
-        greeting: greeting.value,
-        background: background.value
-      };
+  function updateCooldownUI() {
+    const now = Date.now();
+    const remaining = SAVE_COOLDOWN - Math.floor((now - lastSaveTime) / 1000);
+
+    if (remaining > 0) {
+      saveBtn.disabled = true;
+      status.textContent = `Please wait ${remaining}s before saving again`;
+    } else {
+      status.textContent = "";
     }
   }
 
-  function countChanges() {
-    return (
-      Math.abs(name.value.length - lastSaved.name.length) +
-      Math.abs(intro.value.length - lastSaved.intro.length) +
-      Math.abs(greeting.value.length - lastSaved.greeting.length) +
-      Math.abs(background.value.length - lastSaved.background.length)
-    );
-  }
+  Object.values(fields).forEach(el => {
+    el.addEventListener("input", () => {
+      isEditing = true;
+      saveBtn.disabled = totalChanges() < 3;
+      status.textContent = "Editing…";
+    });
+  });
 
-  async function saveCharacter() {
-    const changedChars = countChanges();
-
-    if (changedChars < 3) {
-      alert("Please change at least 3 characters before applying.");
+  saveBtn.addEventListener("click", async () => {
+    const now = Date.now();
+    if ((now - lastSaveTime) / 1000 < SAVE_COOLDOWN) {
+      updateCooldownUI();
       return;
     }
 
     await setDoc(docRef, {
-      name: name.value,
-      intro: intro.value,
-      greeting: greeting.value,
-      background: background.value,
-      updatedAt: Date.now()
+      name: fields.name.value,
+      intro: fields.intro.value,
+      greeting: fields.greeting.value,
+      background: fields.background.value,
+      updatedAt: now
     }, { merge: true });
 
-    await updateDoc(docRef, {
-      edits: increment(1)
-    });
+    await updateDoc(docRef, { edits: increment(1) });
 
-    loadCharacter();
-  }
+    lastSaveTime = now;
+    isEditing = false;
+    saveBtn.disabled = true;
+    status.textContent = "Saved";
 
-  saveBtn.addEventListener("click", saveCharacter);
-  loadCharacter();
+    setInterval(updateCooldownUI, 1000);
+  });
+
+  onSnapshot(docRef, snap => {
+    if (!snap.exists()) return;
+    const data = snap.data();
+
+    editCount.textContent = `Edited ${data.edits || 0} times`;
+
+    if (isEditing) return;
+
+    fields.name.value = data.name || "";
+    fields.intro.value = data.intro || "";
+    fields.greeting.value = data.greeting || "";
+    fields.background.value = data.background || "";
+
+    lastSaved = {
+      name: fields.name.value,
+      intro: fields.intro.value,
+      greeting: fields.greeting.value,
+      background: fields.background.value
+    };
+
+    status.textContent = "Up to date";
+  });
 </script>
 
 </body>
